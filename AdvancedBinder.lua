@@ -1,8 +1,8 @@
-script_name("Advanced Binder")
-script_version("1.0.0")
-script_version_number(1)
-script_author("Callow")
+__name__ = "Advanced Binder"
+__version__ = "1.0.0"
+__author__ = "Callow"
 
+require 'clipboard'
 local ImGui = require 'lib.ImGui'
 local encoding = require 'encoding'
 local vkeys = require 'lib.vkeys'
@@ -11,18 +11,20 @@ local ini = require 'inicfg'
 
 encoding.default = 'CP1251'
 local u8 = encoding.UTF8
-local defaultSaveFolder = "moonloader/Advanced Binder/Bind Sets"
-local defaultKeywordsFolder = "moonLoader/Advanced Binder/Keywords"
+local defaultPathScript = "moonloader/Advanced Binder/"
+local defaultSaveFolder = defaultPathScript .. "Bind Sets"
+local defaultKeywordsFolder = defaultPathScript.. "Keywords"
 
 local defaultBindSet = { name = "New set", eventType = 0, startId = 0, sameIdMode = 0, key = 0,
 												commandInfo = { block = false, command = "" }, eventName = "", messages = {},
-												checkKeyWhileInput = false}
+												checkKeyWhileInput = false, saveInChatHistory = false}
 local defaultMessage = { text = "", eventType = 1, delay = 1000, autoEnter = true }
 
 local bit = require "bit"
 local ffi = require 'ffi'
 
 local saveCheckPeriod = 2000
+local updateUrl = nil
 
 local bindSets = {}
 local scripts = {}
@@ -39,6 +41,9 @@ local settings = defaultIni
 local strings = {
 	RU = {
 		windowName = "Advanced Binder",
+		isLatestUpdate = "У вас последняя версия",
+		saveInChatHistory = "История чата",
+		haveUpdate = "Найдено обновления. \nНажмите чтобы скопировать ссылку",
 		bindSets = "Набор биндов",
 		language = "Язык",
 		saveUpdatePeriod = "Период сохранения",
@@ -84,6 +89,9 @@ local strings = {
 		windowName = "Advanced Binder",
 		bindSets = "Bind Sets",
 		language = "Language",
+		isLatestUpdate = "You have last version",
+		saveInChatHistory = "Сhat history",
+		haveUpdate = "An update has been found. \nClick to copy link.",
 		saveUpdatePeriod = "Save update period",
 		keywordEvent = "Keywords & Events",
 		checkForUpdate = "Check for update",
@@ -304,6 +312,16 @@ function createLinkTable(t, param)
 	return linked
 end
 
+function versionToInt(ver)
+	local verInt = 0
+	local vers = ver:split(".")
+	local multiply = 10^(#vers-1)
+	for _,v in pairs(vers) do
+		verInt = verInt + multiply*tonumber(v)
+		multiply = multiply / 10
+	end
+	return verInt
+end
 -------------------- Pickle -------------------------
 ----------------------------------------------
 -- Pickle.lua
@@ -675,7 +693,11 @@ function SendCurrentMessage(bindSet)
 	if #cmessage > 0 then
 		cmessage = u8:decode(cmessage)
 		if bindSet.currentMessage.autoEnter then
-			sampSendChat(cmessage)
+			if bindSet.saveInChatHistory then
+				sampProcessChatInput(cmessage)
+			else
+				sampSendChat(cmessage)
+			end
 		else
 			sampSetChatInputEnabled(true)
 			sampSetChatInputText(cmessage)
@@ -715,8 +737,8 @@ local buffers = {
 	checkKeyWhileInput = ImGui.ImBool(false),
 	eventId = ImGui.ImInt(0),
 	commandName = ImGui.ImBuffer(48),
-	commandBlock = ImGui.ImBool(false)
-
+	commandBlock = ImGui.ImBool(false),
+	saveInChatHistory = ImGui.ImBool(false)
 }
 
 function bufferUpdate(bindSet, id)
@@ -745,6 +767,7 @@ function bufferPreset(bindSet)
 	buffers.startId.v = bindSet.startId
 	buffers.rename.v = u8(bindSet.name)
 	buffers.key.v = vkeys.id_to_name(bindSet.key) or ""
+	buffers.saveInChatHistory.v = bindSet.saveInChatHistory
 	buffers.checkKeyWhileInput.v = bindSet.checkKeyWhileInput or false
 	for i, name in ipairs(cached_allEventNames) do
 		if name == bindSet.eventName then
@@ -798,7 +821,17 @@ function ImGui.OnDrawFrame()
 			if ImGui.MenuItem(strings[settings.language].keywordEvent) then
 				currentPage = 1
 			end
-			ImGui.MenuItem(strings[settings.language].checkForUpdate)
+			if ImGui.BeginMenu(strings[settings.language].checkForUpdate) then
+				if updateUrl == nil then
+					ImGui.MenuItem(strings[settings.language].isLatestUpdate);
+				else
+					if ImGui.MenuItem(strings[settings.language].haveUpdate) then
+						clipboard.settext(updateUrl)
+					end
+				end
+				ImGui.EndMenu();
+			end
+
 			ImGui.EndMenuBar()
 			if currentPage == 0 then
 				showBindSetsList()
@@ -989,7 +1022,13 @@ function showBindSetDetails()
 					currentBindSet.sameIdMode = buffers.sameIdMode.v
 				end
 
-				ImGui.NextColumn(); ImGui.NextColumn(); ImGui.NextColumn()
+				ImGui.NextColumn(); ImGui.NextColumn();
+
+				if ImGui.Checkbox(strings[settings.language].saveInChatHistory, buffers.saveInChatHistory) then
+					currentBindSet.saveInChatHistory = buffers.saveInChatHistory.v
+				end
+
+				ImGui.NextColumn()
 
 				if ImGui.Button(strings[settings.language].addMessage) then
 					currentBindSet:insertMessage()
@@ -1250,23 +1289,47 @@ function statusLines()
 	end
 end
 
------------------------- Main -----------------------
+----------------- Update functionality -----------------
+
+local site = "https://sites.google.com/view/callow/samp_scripts"
+local defaultUpdateFile = defaultPathScript .. "update.txt"
+function checkForUpdate()
+	local url = nil
+	local file = createFileWithFolders(defaultUpdateFile)
+	if file then
+		file:close()
+	end
+	downloadUrlToFile(site, defaultUpdateFile)
+	wait(5000)
+	local file = io.open(defaultUpdateFile, "r")
+	if file then
+		local content = file:read("*all")
+		file:close()
+		os.remove(defaultUpdateFile)
+		local version, url = content:match(__name__ .. " | ([^|]+) | ([^|]+) |")
+		if version and versionToInt(version) > versionToInt(__version__) then
+			updateUrl = url
+			sampAddChatMessage("[ABinder] Has been found update. To get link, select \"Check for update\" folder in binder window", 0xFF00FFFF)
+		end
+	end
+end
+
+------------------------ Main --------------------------
 
 function main()
 	if not isSampfuncsLoaded() or not isSampLoaded() then return end
 	while not isSampAvailable() do wait(200) end
 	settings = ini.load(defaultIni)
-	downloadUrlToFile("https://sites.google.com/site/doubletapinside/poslednie-versii", filename_update)
+
 	scriptLoader()
 	loadAllBindSets()
 	sampRegisterChatCommand("advbind", function(arg) if not window_state.v then window_state.v = true end end)
 	sampRegisterChatCommand("advstatus", function(arg)
 		statusLineEnabled = not statusLineEnabled
-		sampAddChatMessage("[ABinder] Status was " .. (statusLineEnabled and "enabled" or "disabled") .. ".", 0xFFFFFFFF)
 		if statusLineEnabled then lua_thread.create(statusLines) end end
 	)
-
-	thread = lua_thread.create(saveUpdater)
+	updateThread = lua_thread.create(checkForUpdate)
+	saveUpdaterThread = lua_thread.create(saveUpdater)
 	clickHandler = lua_thread.create(BindSetClickHandler)
 	while true do
 		wait(100)
