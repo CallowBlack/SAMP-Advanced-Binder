@@ -6,7 +6,7 @@ This is ingame binder for SAMP.
 
 ### Prerequisites
 
-As this script writed using [MoonLoader](https://www.blast.hk/threads/13305/) and [SampFuncs](https://www.blast.hk/threads/13305/). 
+As this script writed using [MoonLoader](https://www.blast.hk/threads/13305/), [SampFuncs](https://www.blast.hk/threads/13305/) and [Moon ImGui](https://www.blast.hk/threads/19292/). 
 You need install it before as install script.
 
 ### Installing
